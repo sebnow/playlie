@@ -1,4 +1,9 @@
 extern crate hyper;
+extern crate serde;
+#[cfg_attr(test, macro_use)]
+extern crate serde_json;
+#[macro_use]
+extern crate serde_derive;
 
 mod lastfm;
 
@@ -11,9 +16,9 @@ fn main() {
 
     rt::run(lfm.similar_tracks("cher", "believe")
         .map(|res| {
-            println!("Response: {}", res.status());
+            println!("Response: {:?}", res);
         })
         .map_err(|err| {
-            println!("Error: {}", err);
+            println!("Error: {:?}", err);
         }));
 }
