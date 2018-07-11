@@ -1,3 +1,4 @@
+#![feature(try_from)]
 extern crate hyper;
 extern crate serde;
 #[cfg_attr(test, macro_use)]
