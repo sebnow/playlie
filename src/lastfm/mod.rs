@@ -54,7 +54,7 @@ impl<'a> Client<'a> {
                 "track.getsimilar",
                 &format!("artist={}&track={}", artist, track),
             ))
-            .map_err(errors::Error::from)
+            .from_err()
             .and_then(parse_response)
             .map(|s: SimilarTracks| s.similar_tracks.tracks)
     }
@@ -76,7 +76,7 @@ where
     let (parts, body) = res.into_parts();
 
     body.concat2()
-        .map_err(errors::Error::from)
+        .from_err()
         .and_then(move |b| -> Result<T, errors::Error> {
             if parts.status.is_success() {
                 serde_json::from_slice(&b).map_err(errors::Error::from)
