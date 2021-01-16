@@ -1,5 +1,5 @@
-use hyper;
 use serde::de::{self, Visitor};
+use serde::Deserialize;
 use serde_json;
 use std::convert::From;
 use std::convert::TryFrom;
@@ -10,7 +10,7 @@ pub enum Error {
     /// An error occurred while parsing the response
     ParsingError(serde_json::error::Error),
     /// An error occurred during the request
-    HTTPError(hyper::error::Error),
+    HTTPError(reqwest::Error),
     /// An error occurred from the API
     APIError(ErrorResponse),
 }
@@ -21,10 +21,23 @@ impl From<serde_json::Error> for Error {
     }
 }
 
-impl From<hyper::Error> for Error {
-    fn from(error: hyper::Error) -> Self {
+impl From<reqwest::Error> for Error {
+    fn from(error: reqwest::Error) -> Self {
         Error::HTTPError(error)
     }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::ParsingError(e) => write!(f, "parse error: {}", e),
+            Error::HTTPError(e) => write!(f, "request error: {}", e),
+            Error::APIError(e) => write!(f, "LastFM error ({}): {}", e.error, e.message),
+        }
+    }
+}
+
+impl std::error::Error for Error {
 }
 
 #[derive(Debug, PartialEq)]
@@ -83,6 +96,12 @@ pub enum ErrorCode {
     RateLimitExceeded = 29,
 }
 
+impl std::fmt::Display for ErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
 #[derive(Deserialize, Debug, PartialEq)]
 pub struct InvalidErrorCode(u64);
 
@@ -126,7 +145,8 @@ impl TryFrom<u64> for ErrorCode {
 // currently support deserializing to a C-style enum; https://github.com/serde-rs/json/issues/349
 impl<'de> de::Deserialize<'de> for ErrorCode {
     fn deserialize<D>(deserializer: D) -> Result<ErrorCode, D::Error>
-        where D: de::Deserializer<'de>
+    where
+        D: de::Deserializer<'de>,
     {
         deserializer.deserialize_i32(ErrorCodeVisitor)
     }
@@ -141,16 +161,28 @@ impl<'de> Visitor<'de> for ErrorCodeVisitor {
         formatter.write_str("an integer between 2 and 29")
     }
 
-    fn visit_u8<E>(self, value: u8) -> Result<Self::Value, E> where E: de::Error {
-        ErrorCode::try_from(value as u64).map_err(|e| E::custom(format!("invalid error code: {}", e.0)))
+    fn visit_u8<E>(self, value: u8) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        ErrorCode::try_from(value as u64)
+            .map_err(|e| E::custom(format!("invalid error code: {}", e.0)))
     }
 
-    fn visit_u32<E>(self, value: u32) -> Result<ErrorCode, E> where E: de::Error {
-        ErrorCode::try_from(value as u64).map_err(|e| E::custom(format!("invalid error code: {}", e.0)))
+    fn visit_u32<E>(self, value: u32) -> Result<ErrorCode, E>
+    where
+        E: de::Error,
+    {
+        ErrorCode::try_from(value as u64)
+            .map_err(|e| E::custom(format!("invalid error code: {}", e.0)))
     }
 
-    fn visit_u64<E>(self, value: u64) -> Result<ErrorCode, E> where E: de::Error {
-        ErrorCode::try_from(value as u64).map_err(|e| E::custom(format!("invalid error code: {}", e.0)))
+    fn visit_u64<E>(self, value: u64) -> Result<ErrorCode, E>
+    where
+        E: de::Error,
+    {
+        ErrorCode::try_from(value as u64)
+            .map_err(|e| E::custom(format!("invalid error code: {}", e.0)))
     }
 }
 
@@ -163,7 +195,7 @@ pub struct ErrorResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json;
+    use serde_json::json;
 
     #[test]
     fn deserialize_api_error() {
@@ -185,7 +217,10 @@ mod tests {
     #[test]
     fn error_code_try_from() {
         assert_eq!(Err(InvalidErrorCode(255)), ErrorCode::try_from(255));
-        assert_eq!(Err(InvalidErrorCode(4294967295)), ErrorCode::try_from(4294967295));
+        assert_eq!(
+            Err(InvalidErrorCode(4294967295)),
+            ErrorCode::try_from(4294967295)
+        );
         assert_eq!(Ok(ErrorCode::InvalidFormat), ErrorCode::try_from(5));
     }
 }

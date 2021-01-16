@@ -1,12 +1,10 @@
-use hyper;
-use hyper::client::HttpConnector;
-use hyper::rt::{Future, Stream};
-use serde::de;
-use serde_json;
+use reqwest;
+use serde::Deserialize;
 
 pub mod errors;
 
-static BASE_URL: &'static str = "http://ws.audioscrobbler.com/2.0";
+static AS_BASE_URL: &'static str = "http://ws.audioscrobbler.com/2.0";
+static LAST_FM_BASE_URL: &'static str = "https://last.fm";
 
 #[derive(Deserialize, Debug, PartialEq)]
 struct SimilarTracks {
@@ -31,67 +29,66 @@ pub struct SimilarTrack {
     pub artist: Artist,
 }
 
+#[derive(Deserialize, Debug, PartialEq)]
+pub struct Playlist {
+    pub playlist: Vec<PlaylistItem>,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+pub struct PlaylistItem {
+    pub name: String,
+    pub artists: Vec<Artist>,
+}
+
 pub struct Client<'a> {
     api_key: &'a str,
-    http: &'a hyper::Client<HttpConnector>,
+    http: &'a reqwest::Client,
 }
 
 impl<'a> Client<'a> {
-    pub fn new(api_key: &'a str, client: &'a hyper::Client<HttpConnector>) -> Self {
+    pub fn new(api_key: &'a str, client: &'a reqwest::Client) -> Self {
         Client {
-            api_key: api_key,
+            api_key,
             http: client,
         }
     }
 
-    pub fn similar_tracks(
+    pub async fn similar_tracks(
         &self,
         artist: &str,
         track: &str,
-    ) -> impl Future<Item = Vec<SimilarTrack>, Error = errors::Error> {
-        self.http
-            .get(self.build_uri(
+    ) -> Result<Vec<SimilarTrack>, errors::Error> {
+        let res = self
+            .http
+            .get(&self.build_as_uri(
                 "track.getsimilar",
                 &format!("artist={}&track={}", artist, track),
             ))
-            .from_err()
-            .and_then(parse_response)
-            .map(|s: SimilarTracks| s.similar_tracks.tracks)
+            .send()
+            .await?
+            .json::<SimilarTracks>().await?;
+
+        Ok(res.similar_tracks.tracks)
     }
 
-    fn build_uri(&self, method: &str, params: &str) -> hyper::Uri {
-        let endpoint = format!(
+    pub async fn user_recommended(&self, user: &str) -> Result<Playlist, errors::Error> {
+        let endpoint = format!("{}/player/station/user/{}/recommended", LAST_FM_BASE_URL, user);
+
+        Ok(self.http.get(&endpoint).send().await?.json::<Playlist>().await?)
+    }
+
+    fn build_as_uri(&self, method: &str, params: &str) -> String {
+        format!(
             "{}?method={}&api_key={}&format=json&{}",
-            BASE_URL, method, self.api_key, params
-        );
-
-        endpoint.parse().unwrap()
+            AS_BASE_URL, method, self.api_key, params
+        )
     }
-}
-
-fn parse_response<T>(res: hyper::Response<hyper::Body>) -> impl Future<Item = T, Error = errors::Error>
-where
-    for<'de> T: de::Deserialize<'de>,
-{
-    let (parts, body) = res.into_parts();
-
-    body.concat2()
-        .from_err()
-        .and_then(move |b| -> Result<T, errors::Error> {
-            if parts.status.is_success() {
-                serde_json::from_slice(&b).map_err(errors::Error::from)
-            } else {
-                serde_json::from_slice(&b)
-                    .map_err(errors::Error::from)
-                    .and_then(|r: errors::ErrorResponse| Err(errors::Error::APIError(r.into())))
-            }
-        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json;
+    use serde_json::json;
 
     #[test]
     fn deserialize_similar_tracks() {
